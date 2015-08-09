@@ -37,11 +37,11 @@ namespace SQLite.Net
         public const string ImplicitIndexSuffix = "Id";
 
         internal static string SqlDecl(TableMapping.Column p, bool storeDateTimeAsTicks, IBlobSerializer serializer,
-            IDictionary<Type, string> extraTypeMappings)
+            IDictionary<Type, string> extraTypeMappings, bool hasCompositePK = false) //MultiPK: //IDictionary<Type, string> extraTypeMappings) 
         {
             var decl = "\"" + p.Name + "\" " + SqlType(p, storeDateTimeAsTicks, serializer, extraTypeMappings) + " ";
 
-            if (p.IsPK)
+            if (p.IsPK && !hasCompositePK) //MultiPK: //if (p.IsPK)
             {
                 decl += "primary key ";
             }
@@ -78,29 +78,29 @@ namespace SQLite.Net
                 return extraMapping;
             }
 
-            if (clrType == typeof (bool) || clrType == typeof (byte) || clrType == typeof (ushort) ||
-                clrType == typeof (sbyte) || clrType == typeof (short) || clrType == typeof (int) ||
-                clrType == typeof (uint) || clrType == typeof (long) ||
-                interfaces.Contains(typeof (ISerializable<bool>)) ||
-                interfaces.Contains(typeof (ISerializable<byte>)) ||
-                interfaces.Contains(typeof (ISerializable<ushort>)) ||
-                interfaces.Contains(typeof (ISerializable<sbyte>)) ||
-                interfaces.Contains(typeof (ISerializable<short>)) ||
-                interfaces.Contains(typeof (ISerializable<int>)) ||
-                interfaces.Contains(typeof (ISerializable<uint>)) ||
-                interfaces.Contains(typeof (ISerializable<long>)) ||
-                interfaces.Contains(typeof (ISerializable<ulong>)))
+            if (clrType == typeof(bool) || clrType == typeof(byte) || clrType == typeof(ushort) ||
+                clrType == typeof(sbyte) || clrType == typeof(short) || clrType == typeof(int) ||
+                clrType == typeof(uint) || clrType == typeof(long) ||
+                interfaces.Contains(typeof(ISerializable<bool>)) ||
+                interfaces.Contains(typeof(ISerializable<byte>)) ||
+                interfaces.Contains(typeof(ISerializable<ushort>)) ||
+                interfaces.Contains(typeof(ISerializable<sbyte>)) ||
+                interfaces.Contains(typeof(ISerializable<short>)) ||
+                interfaces.Contains(typeof(ISerializable<int>)) ||
+                interfaces.Contains(typeof(ISerializable<uint>)) ||
+                interfaces.Contains(typeof(ISerializable<long>)) ||
+                interfaces.Contains(typeof(ISerializable<ulong>)))
             {
                 return "integer";
             }
-            if (clrType == typeof (float) || clrType == typeof (double) || clrType == typeof (decimal) ||
-                interfaces.Contains(typeof (ISerializable<float>)) ||
-                interfaces.Contains(typeof (ISerializable<double>)) ||
-                interfaces.Contains(typeof (ISerializable<decimal>)))
+            if (clrType == typeof(float) || clrType == typeof(double) || clrType == typeof(decimal) ||
+                interfaces.Contains(typeof(ISerializable<float>)) ||
+                interfaces.Contains(typeof(ISerializable<double>)) ||
+                interfaces.Contains(typeof(ISerializable<decimal>)))
             {
                 return "float";
             }
-            if (clrType == typeof (string) || interfaces.Contains(typeof (ISerializable<string>)))
+            if (clrType == typeof(string) || interfaces.Contains(typeof(ISerializable<string>)))
             {
                 var len = p.MaxStringLength;
 
@@ -111,15 +111,15 @@ namespace SQLite.Net
 
                 return "varchar";
             }
-            if (clrType == typeof (TimeSpan) || interfaces.Contains(typeof (ISerializable<TimeSpan>)))
+            if (clrType == typeof(TimeSpan) || interfaces.Contains(typeof(ISerializable<TimeSpan>)))
             {
                 return "bigint";
             }
-            if (clrType == typeof (DateTime) || interfaces.Contains(typeof (ISerializable<DateTime>)))
+            if (clrType == typeof(DateTime) || interfaces.Contains(typeof(ISerializable<DateTime>)))
             {
                 return storeDateTimeAsTicks ? "bigint" : "datetime";
             }
-            if (clrType == typeof (DateTimeOffset))
+            if (clrType == typeof(DateTimeOffset))
             {
                 return "bigint";
             }
@@ -127,11 +127,11 @@ namespace SQLite.Net
             {
                 return "integer";
             }
-            if (clrType == typeof (byte[]) || interfaces.Contains(typeof (ISerializable<byte[]>)))
+            if (clrType == typeof(byte[]) || interfaces.Contains(typeof(ISerializable<byte[]>)))
             {
                 return "blob";
             }
-            if (clrType == typeof (Guid) || interfaces.Contains(typeof (ISerializable<Guid>)))
+            if (clrType == typeof(Guid) || interfaces.Contains(typeof(ISerializable<Guid>)))
             {
                 return "varchar(36)";
             }
@@ -144,7 +144,13 @@ namespace SQLite.Net
 
         internal static bool IsPK(MemberInfo p)
         {
-            return p.GetCustomAttributes<PrimaryKeyAttribute>().Any();
+            return IsPK(p, null);
+        }
+        internal static bool IsPK(MemberInfo p, IAttributeProvider attrProvider)
+        {
+            return attrProvider != null ?
+                attrProvider.GetCustomAttributes<PrimaryKeyAttribute>(p).Any() :
+                p.GetCustomAttributes<PrimaryKeyAttribute>().Any();
         }
 
         internal static string Collation(MemberInfo p)

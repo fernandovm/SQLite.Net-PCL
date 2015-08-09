@@ -34,44 +34,87 @@ namespace SQLite.Net
     {
         private readonly Column _autoPk;
         private Column[] _insertColumns;
+        private Column _pk;
+        private IAttributeProvider attrProvider;
 
         [PublicAPI]
-        public TableMapping(Type type, IEnumerable<PropertyInfo> properties, CreateFlags createFlags = CreateFlags.None)
+        public TableMapping(Type type, IEnumerable<PropertyInfo> properties, CreateFlags createFlags = CreateFlags.None, IAttributeProvider attrProvider = null)
         {
             MappedType = type;
+            this.attrProvider = attrProvider;
 
-            var tableAttr = type.GetTypeInfo().GetCustomAttributes<TableAttribute>().FirstOrDefault();
+            //var tableAttr = type.GetTypeInfo().GetCustomAttributes<TableAttribute>().FirstOrDefault();
+            var tableAttr = this.attrProvider != null ?
+                this.attrProvider.GetCustomAttributes<TableAttribute>(type).FirstOrDefault() :
+                type.GetTypeInfo().GetCustomAttributes<TableAttribute>().FirstOrDefault();
 
-            TableName = tableAttr != null ?  tableAttr.Name : MappedType.Name;
+            TableName = tableAttr != null ? tableAttr.Name : MappedType.Name;
 
             var props = properties;
 
             var cols = new List<Column>();
             foreach (var p in props)
             {
-                var ignore = p.IsDefined(typeof (IgnoreAttribute), true);
+                var ignore = p.IsDefined(typeof(IgnoreAttribute), true);
 
-                if (p.CanWrite && !ignore)
+                //if (p.CanWrite && !ignore)
+                //{
+                //    cols.Add(new Column(p, createFlags));
+                //}
+
+                if (!ignore)
                 {
-                    cols.Add(new Column(p, createFlags));
+                    var multi = this.attrProvider != null ?
+                        this.attrProvider.GetCustomAttributes<MultiColumnAttribute>(p).FirstOrDefault() :
+                        p.GetCustomAttributes<MultiColumnAttribute>().FirstOrDefault();
+
+                    if (multi != null)
+                    {
+                        for (int i = 0; i < multi.PropertyNames.Length; i++)
+                        {
+                            var p2 = p.PropertyType.GetRuntimeProperty(multi.PropertyNames[i]);
+
+                            cols.Add(new Column(p, createFlags, attrProvider, p2, multi.PropertyNames.Length));
+                        }
+                    }
+                    else
+                    {
+                        if (p.CanWrite)
+                            cols.Add(new Column(p, createFlags, attrProvider));
+                    }
                 }
             }
+
             Columns = cols.ToArray();
-            foreach (var c in Columns)
+            CompositePK = Columns.Where(col => col.IsPK).ToArray();
+
+            if (CompositePK.Length > 1)
             {
-                if (c.IsAutoInc && c.IsPK)
+                HasCompositePK = true;
+            }
+            else
+            {
+                foreach (var c in Columns)
                 {
-                    _autoPk = c;
+                    if (c.IsAutoInc && c.IsPK)
+                    {
+                        _autoPk = c;
+                    }
+                    if (c.IsPK)
+                    {
+                        _pk = c;
+                    }
                 }
-                if (c.IsPK)
-                {
-                    PK = c;
-                }
+
+                HasAutoIncPK = _autoPk != null;
             }
 
-            HasAutoIncPK = _autoPk != null;
-
-            if (PK != null)
+            if (CompositePK.Length > 1)
+            {
+                string compositePKString = string.Join(" and ", CompositePK.Select(pk => "\"" + pk.Name + "\" = ? "));
+                GetByPrimaryKeySql = string.Format("select * from \"{0}\" where {1}", TableName, compositePKString);
+            }
+            else if (PK != null)
             {
                 GetByPrimaryKeySql = string.Format("select * from \"{0}\" where \"{1}\" = ?", TableName, PK.Name);
             }
@@ -92,7 +135,27 @@ namespace SQLite.Net
         public Column[] Columns { get; private set; }
 
         [PublicAPI]
-        public Column PK { get; private set; }
+        //public Column PK { get; private set; }
+        public Column PK
+        {
+            get
+            {
+                if (HasCompositePK)
+                {
+                    throw new NotSupportedException("Table has a composite primary key. Use CompositePK property instead.");
+                }
+                else
+                {
+                    return _pk;
+                }
+            }
+        }
+
+        [PublicAPI]
+        public Column[] CompositePK { get; private set; }
+
+        [PublicAPI]
+        public bool HasCompositePK { get; private set; }
 
         [PublicAPI]
         public string GetByPrimaryKeySql { get; private set; }
@@ -132,26 +195,34 @@ namespace SQLite.Net
         public class Column
         {
             private readonly PropertyInfo _prop;
+            private readonly PropertyInfo _prop2;
 
             [PublicAPI]
-            public Column(PropertyInfo prop, CreateFlags createFlags = CreateFlags.None)
+            public Column(PropertyInfo prop, CreateFlags createFlags = CreateFlags.None, IAttributeProvider attrProvider = null,
+                PropertyInfo prop2 = null, int multiColumnCount = 0)
             {
                 var colAttr =
                     prop.GetCustomAttributes<ColumnAttribute>(true).FirstOrDefault();
 
-                _prop = prop;
-                Name = colAttr == null ? prop.Name : colAttr.Name;
+                _prop = prop; _prop2 = prop2;
+                this.IsMultiColumn = prop2 != null;
+                this.MultiColumnCount = multiColumnCount;
+                this.SubPropertyName = (_prop2 ?? _prop).Name;
+
+                //Name = colAttr == null ? (prop2 ?? prop).Name : colAttr.Name;
+                Name = colAttr == null ? string.Format("{0}{1}", prop.Name, prop2 != null ? "_" + prop2.Name : "") : colAttr.Name;
+
                 //If this type is Nullable<T> then Nullable.GetUnderlyingType returns the T, otherwise it returns null, so get the actual type instead
-                ColumnType = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+                ColumnType = Nullable.GetUnderlyingType((prop2 ?? prop).PropertyType) ?? (prop2 ?? prop).PropertyType;
                 Collation = Orm.Collation(prop);
 
-                IsPK = Orm.IsPK(prop) ||
+                IsPK = Orm.IsPK(prop, attrProvider) ||
                        (((createFlags & CreateFlags.ImplicitPK) == CreateFlags.ImplicitPK) &&
                         string.Compare(prop.Name, Orm.ImplicitPkName, StringComparison.OrdinalIgnoreCase) == 0);
 
                 var isAuto = Orm.IsAutoInc(prop) ||
                              (IsPK && ((createFlags & CreateFlags.AutoIncPK) == CreateFlags.AutoIncPK));
-                IsAutoGuid = isAuto && ColumnType == typeof (Guid);
+                IsAutoGuid = isAuto && ColumnType == typeof(Guid);
                 IsAutoInc = isAuto && !IsAutoGuid;
 
                 DefaultValue = Orm.GetDefaultValue(prop);
@@ -162,11 +233,15 @@ namespace SQLite.Net
                     && ((createFlags & CreateFlags.ImplicitIndex) == CreateFlags.ImplicitIndex)
                     && Name.EndsWith(Orm.ImplicitIndexSuffix, StringComparison.OrdinalIgnoreCase))
                 {
-                    Indices = new[] {new IndexedAttribute()};
+                    Indices = new[] { new IndexedAttribute() };
                 }
                 IsNullable = !(IsPK || Orm.IsMarkedNotNull(prop));
                 MaxStringLength = Orm.MaxStringLength(prop);
             }
+
+            public bool IsMultiColumn { get; private set; }
+            public int MultiColumnCount { get; private set; }
+            public string SubPropertyName { get; private set; }
 
             [PublicAPI]
             public string Name { get; private set; }
@@ -175,6 +250,12 @@ namespace SQLite.Net
             public string PropertyName
             {
                 get { return _prop.Name; }
+            }
+
+            [PublicAPI]
+            public Type PropertyType
+            {
+                get { return _prop.PropertyType; }
             }
 
             [PublicAPI]
@@ -215,14 +296,14 @@ namespace SQLite.Net
                 var propType = _prop.PropertyType;
                 var typeInfo = propType.GetTypeInfo();
 
-                if (typeInfo.IsGenericType && propType.GetGenericTypeDefinition() == typeof (Nullable<>))
+                if (typeInfo.IsGenericType && propType.GetGenericTypeDefinition() == typeof(Nullable<>))
                 {
                     var typeCol = propType.GetTypeInfo().GenericTypeArguments;
                     if (typeCol.Length > 0)
                     {
                         var nullableType = typeCol[0];
                         var baseType = nullableType.GetTypeInfo().BaseType;
-                        if (baseType == typeof (Enum))
+                        if (baseType == typeof(Enum))
                         {
                             SetEnumValue(obj, nullableType, val);
                         }
@@ -232,7 +313,7 @@ namespace SQLite.Net
                         }
                     }
                 }
-                else if (typeInfo.BaseType == typeof (Enum))
+                else if (typeInfo.BaseType == typeof(Enum))
                 {
                     SetEnumValue(obj, propType, val);
                 }
@@ -240,6 +321,12 @@ namespace SQLite.Net
                 {
                     _prop.SetValue(obj, val, null);
                 }
+            }
+
+            [PublicAPI]
+            public void SetValue(object obj, [CanBeNull] object[] args)
+            {
+                _prop.SetValue(obj, Activator.CreateInstance(_prop.PropertyType, args), null);
             }
 
             private void SetEnumValue(object obj, Type type, object value)
@@ -255,7 +342,13 @@ namespace SQLite.Net
             [PublicAPI]
             public object GetValue(object obj)
             {
-                return _prop.GetValue(obj, null);
+                if (_prop2 != null)
+                {
+                    var ret = _prop.GetValue(obj, null);
+                    return ret != null ? _prop2.GetValue(ret) : null;
+                }
+                else
+                    return _prop.GetValue(obj, null);
             }
         }
     }

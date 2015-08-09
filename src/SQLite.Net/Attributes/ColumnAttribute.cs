@@ -36,4 +36,22 @@ namespace SQLite.Net.Attributes
 
         public string Name { get; set; }
     }
+
+    [PublicAPI]
+    [AttributeUsage(AttributeTargets.Property)]
+    public class MultiColumnAttribute : Attribute
+    {
+        public MultiColumnAttribute(params string[] propertyNames)
+            : this(propertyNames, propertyNames)
+        {
+        }
+        public MultiColumnAttribute(string[] propertyNames, string[] columnNames)
+        {
+            this.ColumnNames = columnNames;
+            this.PropertyNames = propertyNames;
+        }
+
+        public string[] ColumnNames { get; set; }
+        public string[] PropertyNames { get; set; }
+    }
 }

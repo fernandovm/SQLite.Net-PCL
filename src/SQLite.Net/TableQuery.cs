@@ -29,6 +29,7 @@ using System.Linq.Expressions;
 using System.Text;
 using JetBrains.Annotations;
 using SQLite.Net.Interop;
+using System.Reflection;
 
 namespace SQLite.Net
 {
@@ -46,19 +47,26 @@ namespace SQLite.Net
         private List<Ordering> _orderBys;
         private Expression _where;
 
+        private IDictionary<string, Func<string, string, string>> methods = new Dictionary<string, Func<string, string, string>>();
+
         private TableQuery(ISQLitePlatform platformImplementation, SQLiteConnection conn, TableMapping table)
         {
             _sqlitePlatform = platformImplementation;
             Connection = conn;
             Table = table;
+
+            this.methods.Add("Eq", (member, arg) => string.Format("({0} = {1})", member, arg));
+            this.methods.Add("Ne", (member, arg) => string.Format("({0} <> {1})", member, arg));
+            this.methods.Add("Gt", (member, arg) => string.Format("({0} > {1})", member, arg));
+            this.methods.Add("Ge", (member, arg) => string.Format("({0} >= {1})", member, arg));
+            this.methods.Add("Lt", (member, arg) => string.Format("({0} < {1})", member, arg));
+            this.methods.Add("Le", (member, arg) => string.Format("({0} <= {1})", member, arg));
         }
 
         [PublicAPI]
         public TableQuery(ISQLitePlatform platformImplementation, SQLiteConnection conn)
+            : this(platformImplementation, conn, conn.GetMapping(typeof(T)))
         {
-            _sqlitePlatform = platformImplementation;
-            Connection = conn;
-            Table = Connection.GetMapping(typeof (T));
         }
 
         [PublicAPI]
@@ -113,7 +121,7 @@ namespace SQLite.Net
             {
                 throw new NotSupportedException("Must be a predicate");
             }
-            var lambda = (LambdaExpression) predExpr;
+            var lambda = (LambdaExpression)predExpr;
             var pred = lambda.Body;
             var q = Clone<T>();
             q.AddWhere(pred);
@@ -152,17 +160,21 @@ namespace SQLite.Net
             {
                 throw new NotSupportedException("Cannot delete if an offset has been specified");
             }
-            var lambda = (LambdaExpression) predExpr;
+            var lambda = (LambdaExpression)predExpr;
             var pred = lambda.Body;
             if (_where != null)
             {
                 pred = Expression.AndAlso(pred, _where);
             }
-            var args = new List<object>();
-            var w = CompileExpr(pred, args);
+
+            //var args = new List<object>();
+            IDictionary<string, object> namedArgs = new Dictionary<string, object>();
+            var w = SQLiteExprParser.Parse<T>(_where, namedArgs); //CompileExpr(pred, args);
             var cmdText = "delete from \"" + Table.TableName + "\"";
-            cmdText += " where " + w.CommandText;
-            var command = Connection.CreateCommand(cmdText, args.ToArray());
+            cmdText += " where " + w; // w.CommandText;
+
+            var command = Connection.CreateCommand(cmdText, namedArgs);
+            //var command = Connection.CreateCommand(cmdText, args.ToArray());
 
             var result = command.ExecuteNonQuery();
             return result;
@@ -225,7 +237,7 @@ namespace SQLite.Net
             {
                 throw new NotSupportedException("Must be a predicate");
             }
-            var lambda = (LambdaExpression) orderExpr;
+            var lambda = (LambdaExpression)orderExpr;
 
             MemberExpression mem;
 
@@ -284,7 +296,7 @@ namespace SQLite.Net
             Expression<Func<TInner, TKey>> innerKeySelector,
             Expression<Func<T, TInner, TResult>> resultSelector)
         {
-            var q = new TableQuery<TResult>(_sqlitePlatform, Connection, Connection.GetMapping(typeof (TResult)))
+            var q = new TableQuery<TResult>(_sqlitePlatform, Connection, Connection.GetMapping(typeof(TResult)))
             {
                 _joinOuter = this,
                 _joinOuterKeySelector = outerKeySelector,
@@ -306,11 +318,15 @@ namespace SQLite.Net
                 throw new NotSupportedException("Joins are not supported.");
             }
             var cmdText = "select " + selectionList + " from \"" + Table.TableName + "\"";
+
             var args = new List<object>();
+            IDictionary<string, object> namedArgs = new Dictionary<string, object>();
+
             if (_where != null)
             {
-                var w = CompileExpr(_where, args);
-                cmdText += " where " + w.CommandText;
+                SQLiteExprParser.Columns = this.Table.Columns;
+                var w = SQLiteExprParser.Parse<T>(_where, namedArgs); //CompileExpr(_where, args);
+                cmdText += " where " + w; // w.CommandText;
             }
             if ((_orderBys != null) && (_orderBys.Count > 0))
             {
@@ -330,7 +346,8 @@ namespace SQLite.Net
                 }
                 cmdText += " offset " + _offset.Value;
             }
-            return Connection.CreateCommand(cmdText, args.ToArray());
+            //return Connection.CreateCommand(cmdText, args.ToArray());
+            return Connection.CreateCommand(cmdText, namedArgs);
         }
 
         private CompileResult CompileExpr([NotNull] Expression expr, List<object> queryArgs)
@@ -341,14 +358,36 @@ namespace SQLite.Net
             }
             if (expr is BinaryExpression)
             {
-                var bin = (BinaryExpression) expr;
+                var bin = (BinaryExpression)expr;
+                IEnumerable<TableMapping.Column> columns;
+
+                if ((columns = Table.Columns.MultiColumns(bin.Left)).Count() > 0)
+                {
+                    var statment = string.Empty;
+                    var right = CompileExpr(bin.Right, queryArgs);
+
+                    foreach (var column in columns)
+                    {
+                        //var value = column.GetValue(right.Value);
+                        var value = right.Value.GetType().GetRuntimeProperty(column.SubPropertyName).GetValue(right.Value);
+
+                        statment += string.Format("{0}={1} and ", column.Name, column.ColumnType == typeof(string) ? "'" + value + "'" : value);
+                    }
+
+                    return new CompileResult { CommandText = "(" + statment.Substring(0, statment.Length - 5) + ")" };
+                }
 
                 var leftr = CompileExpr(bin.Left, queryArgs);
                 var rightr = CompileExpr(bin.Right, queryArgs);
 
                 //If either side is a parameter and is null, then handle the other side specially (for "is null"/"is not null")
                 string text;
-                if (leftr.CommandText == "?" && leftr.Value == null)
+                if (leftr.CommandText != "?" && rightr.Value != null)
+                {
+                    var value = rightr.Value.GetType() == typeof(string) ? "'" + rightr.Value + "'" : rightr.Value;
+                    text = "(" + leftr.CommandText + " " + GetSqlName(bin) + " " + value + ")";
+                }
+                else if (leftr.CommandText == "?" && leftr.Value == null)
                 {
                     text = CompileNullBinaryExpression(bin, rightr);
                 }
@@ -367,12 +406,12 @@ namespace SQLite.Net
             }
             if (expr.NodeType == ExpressionType.Not)
             {
-                var operandExpr = ((UnaryExpression) expr).Operand;
+                var operandExpr = ((UnaryExpression)expr).Operand;
                 var opr = CompileExpr(operandExpr, queryArgs);
                 var val = opr.Value;
                 if (val is bool)
                 {
-                    val = !((bool) val);
+                    val = !((bool)val);
                 }
                 return new CompileResult
                 {
@@ -382,7 +421,7 @@ namespace SQLite.Net
             }
             if (expr.NodeType == ExpressionType.Call)
             {
-                var call = (MethodCallExpression) expr;
+                var call = (MethodCallExpression)expr;
                 var args = new CompileResult[call.Arguments.Count];
                 var obj = call.Object != null ? CompileExpr(call.Object, queryArgs) : null;
 
@@ -403,7 +442,7 @@ namespace SQLite.Net
                 }
                 else if (call.Method.Name == "Contains" && args.Length == 1)
                 {
-                    if (call.Object != null && call.Object.Type == typeof (string))
+                    if (call.Object != null && call.Object.Type == typeof(string))
                     {
                         sqlCall = "(" + obj.CommandText + " like ('%' || " + args[0].CommandText + " || '%'))";
                     }
@@ -432,6 +471,25 @@ namespace SQLite.Net
                 {
                     sqlCall = "(upper(" + obj.CommandText + "))";
                 }
+                //Feito para ler requisiçõs aos extensions methods eq, ne, gt, ge, lt e le...
+                if (call.Type == typeof(bool) && call.Arguments.Count == 2)
+                {
+                    string method = call.Method.Name;
+                    var result = this.CompileExpr(call.Arguments[1], queryArgs);
+                    string argument = result.Value != null ? "'" + result.Value + "'" : result.CommandText;
+                    string member = this.CompileExpr(call.Arguments[0] as MemberExpression, queryArgs).CommandText;
+                    //string argument = this.ProcessMemberExpression(expr.Arguments[1] as MemberExpression) as string;
+
+                    //if (call.Arguments[0] is MemberExpression && (((MemberExpression)call.Arguments[0]).Member).ReflectedType.Equals(typeof(CloudID)))
+                    //{
+                    //    member = member.Replace('.', '_');
+                    //}
+
+                    if (this.methods.ContainsKey(method))
+                        return new CompileResult() { CommandText = this.methods[method](member, argument) };
+                    else
+                        throw new Exception(string.Format("Method '{0}' not registered.", method));
+                }
                 else
                 {
                     sqlCall = call.Method.Name.ToLower() + "(" +
@@ -444,7 +502,7 @@ namespace SQLite.Net
             }
             if (expr.NodeType == ExpressionType.Constant)
             {
-                var c = (ConstantExpression) expr;
+                var c = (ConstantExpression)expr;
                 queryArgs.Add(c.Value);
                 return new CompileResult
                 {
@@ -454,7 +512,7 @@ namespace SQLite.Net
             }
             if (expr.NodeType == ExpressionType.Convert)
             {
-                var u = (UnaryExpression) expr;
+                var u = (UnaryExpression)expr;
                 var ty = u.Type;
                 var valr = CompileExpr(u.Operand, queryArgs);
                 return new CompileResult
@@ -465,7 +523,7 @@ namespace SQLite.Net
             }
             if (expr.NodeType == ExpressionType.MemberAccess)
             {
-                var mem = (MemberExpression) expr;
+                var mem = (MemberExpression)expr;
 
                 if (mem.Expression != null && mem.Expression.NodeType == ExpressionType.Parameter)
                 {
@@ -473,21 +531,33 @@ namespace SQLite.Net
                     // This is a column of our table, output just the column name
                     // Need to translate it if that column name is mapped
                     //
-                    var columnName = Table.FindColumnWithPropertyName(mem.Member.Name).Name;
+                    var column = Table.FindColumnWithPropertyName(mem.Member.Name);
+                    var columnName = column.Name;
                     return new CompileResult
                     {
-                        CommandText = "\"" + columnName + "\""
+                        CommandText = "\"" + columnName + "\"",
                     };
                 }
                 object obj = null;
                 if (mem.Expression != null)
                 {
+                    var column = Table.Columns.MultiColumnPart(mem);
+                    if (column != null)
+                    {
+                        return new CompileResult
+                        {
+                            CommandText = "\"" + column.Name + "\""
+                        };
+                    }
+
                     var r = CompileExpr(mem.Expression, queryArgs);
+
                     if (r.Value == null)
                     {
                         throw new NotSupportedException("Member access failed to compile expression");
                     }
-                    if (r.CommandText == "?")
+
+                    if (r.CommandText == "?" && queryArgs.Count > 0)
                     {
                         queryArgs.RemoveAt(queryArgs.Count - 1);
                     }
@@ -507,7 +577,7 @@ namespace SQLite.Net
                     var sb = new StringBuilder();
                     sb.Append("(");
                     var head = "";
-                    foreach (var a in (IEnumerable) val)
+                    foreach (var a in (IEnumerable)val)
                     {
                         queryArgs.Add(a);
                         sb.Append(head);
@@ -521,7 +591,7 @@ namespace SQLite.Net
                         Value = val
                     };
                 }
-                queryArgs.Add(val);
+                //queryArgs.Add(val);
                 return new CompileResult
                 {
                     CommandText = "?",
@@ -662,6 +732,56 @@ namespace SQLite.Net
 
             [CanBeNull]
             public object Value { get; set; }
+        }
+    }
+
+    public static class TableExtensions
+    {
+        public static TableMapping.Column FindColumnWithPropertyName(this IEnumerable<TableMapping.Column> columns, string propertyName)
+        {
+            return columns.FirstOrDefault(c => c.PropertyName == propertyName);
+        }
+
+        public static TableMapping.Column FindColumn(this IEnumerable<TableMapping.Column> columns, string columnName)
+        {
+            return columns.FirstOrDefault(c => c.Name == columnName);
+        }
+
+        public static bool IsMultiColumn(this IEnumerable<TableMapping.Column> columns, Expression expr)
+        {
+            return columns.MultiColumns(expr).Count() > 0;
+        }
+        public static IEnumerable<TableMapping.Column> MultiColumns(this IEnumerable<TableMapping.Column> columns, Expression expr)
+        {
+            if (expr.NodeType == ExpressionType.MemberAccess)
+            {
+                var mem = expr as MemberExpression;
+
+                return columns.Where(c => c.IsMultiColumn && c.PropertyName == mem.Member.Name && c.PropertyType == mem.Type);
+            }
+
+            return new List<TableMapping.Column>();
+        }
+
+        public static bool IsMultiColumnPart(this IEnumerable<TableMapping.Column> columns, Expression expr)
+        {
+            return columns.MultiColumnPart(expr) != null;
+        }
+
+        public static TableMapping.Column MultiColumnPart(this IEnumerable<TableMapping.Column> columns, Expression expr)
+        {
+            if (expr.NodeType == ExpressionType.MemberAccess)
+            {
+                var mem = expr as MemberExpression;
+
+                return columns.Where(
+                    c => c.IsMultiColumn && (mem.Expression is MemberExpression) &&
+                    (c.PropertyName == (mem.Expression as MemberExpression).Member.Name && c.PropertyType == mem.Member.DeclaringType) &&
+                    c.Name.EndsWith(mem.Member.Name)
+                ).FirstOrDefault();
+            }
+
+            return null;
         }
     }
 }

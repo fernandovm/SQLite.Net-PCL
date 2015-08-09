@@ -66,12 +66,14 @@
     </Compile>
     <Compile Include="ActiveInsertCommand.cs" />
     <Compile Include="Annotations\JetBrains.cs" />
+    <Compile Include="Attributes\AttributeProvider.cs" />
     <Compile Include="Attributes\DefaultAttribute.cs" />
     <Compile Include="Attributes\NotNullAttribute.cs" />
     <Compile Include="BaseTableQuery.cs" />
     <Compile Include="BlobSerializerDelegate.cs" />
     <Compile Include="CreateTablesResult.cs" />
     <Compile Include="ContractResolver.cs" />
+    <Compile Include="ExprParser.cs" />
     <Compile Include="IContractResolver.cs" />
     <Compile Include="Interop\ColType.cs" />
     <Compile Include="Interop\ConfigOption.cs" />
