@@ -52,7 +52,7 @@ namespace SQLite.Net
 
                 if (this.methods.ContainsKey(method))
                 {
-                    var namedArg = string.Format(":{0}", member);
+                    var namedArg = this.AdjustNamedArg(string.Format(":{0}", member));
                     this.args.Add(namedArg, argument);
 
                     return this.methods[method](member, namedArg);
@@ -81,12 +81,8 @@ namespace SQLite.Net
                     //TODO: Depois refatorar isso para ficar geral...
                     if (expr.Left is UnaryExpression && ((UnaryExpression)expr.Left).Operand.Type.GetTypeInfo().IsEnum && expr.Right is ConstantExpression)
                     {
-                        //return string.Format("({0} = :{1})",
-                        //this.Process(expr.Left),
-                        //this.ConvertRightExpressionValue(((UnaryExpression)expr.Left).Operand.Type, ((ConstantExpression)expr.Right).Value));
-
                         propertyName = this.Process(expr.Left).ToString();
-                        namedArg = string.Format(":{0}", propertyName);
+                        namedArg = this.AdjustNamedArg(string.Format(":{0}", propertyName));
                         this.args.Add(namedArg, this.ConvertRightExpressionValue(((UnaryExpression)expr.Left).Operand.Type, ((ConstantExpression)expr.Right).Value));
 
                         return string.Format("({0} = {1})", propertyName, namedArg);
@@ -114,7 +110,7 @@ namespace SQLite.Net
                     else
                     {
                         propertyName = this.Process(expr.Left).ToString();
-                        namedArg = string.Format(":{0}", propertyName);
+                        namedArg = this.AdjustNamedArg(string.Format(":{0}", propertyName));
 
                         this.args.Add(namedArg, this.Process(expr.Right));
 
@@ -128,9 +124,13 @@ namespace SQLite.Net
                 case ExpressionType.LessThanOrEqual:
                     {
                         propertyName = this.Process(expr.Left).ToString();
-                        namedArg = string.Format(":{0}", propertyName);
+                        namedArg = this.AdjustNamedArg(string.Format(":{0}", propertyName));
 
-                        this.args.Add(namedArg, this.Process(expr.Right));
+                        //TODO: Depois refatorar isso para ficar geral...
+                        if (expr.Left is UnaryExpression && ((UnaryExpression)expr.Left).Operand.Type.GetTypeInfo().IsEnum && expr.Right is ConstantExpression)
+                            this.args.Add(namedArg, this.ConvertRightExpressionValue(((UnaryExpression)expr.Left).Operand.Type, ((ConstantExpression)expr.Right).Value));
+                        else
+                            this.args.Add(namedArg, this.Process(expr.Right));
 
                         switch (expr.NodeType)
                         {
@@ -153,7 +153,23 @@ namespace SQLite.Net
                     throw new Exception(string.Format("Invalid expression type:{0}.", expr.NodeType));
             }
         }
-        private string ProcessUnaryExpression(UnaryExpression expr)
+        private string AdjustNamedArg(string propertyName)
+        {
+            if (this.args.ContainsKey(propertyName))
+            {
+                for (int i = 0; i < 50; i++)
+                {
+                    if (!this.args.ContainsKey(propertyName + i.ToString()))
+                        return propertyName + i.ToString();
+                }
+
+                throw new InvalidOperationException("Too many parameters for a given object property.");
+            }
+
+            return propertyName;
+        }
+
+        private object ProcessUnaryExpression(UnaryExpression expr)
         {
             switch (expr.NodeType)
             {
@@ -163,7 +179,16 @@ namespace SQLite.Net
                 case ExpressionType.Convert:
                     if (expr.Operand.Type.GetTypeInfo().IsEnum) // || expr.Operand.Type == typeof(CloudID))
                     {
-                        return string.Format("{0}", this.ProcessMemberExpression((MemberExpression)expr.Operand));
+                        if (expr.Operand is MemberExpression)
+                            return string.Format("{0}", this.ProcessMemberExpression((MemberExpression)expr.Operand));
+                        else if (expr.Operand is ConstantExpression)
+                            return string.Format("{0}", ((ConstantExpression)expr.Operand).Value);
+                        else
+                            throw new Exception("Invalid expression!");
+                    }
+                    else if (Nullable.GetUnderlyingType(expr.Type) != null) //is nullable type
+                    {
+                        return this.ProcessMemberExpression((MemberExpression)expr.Operand);
                     }
                     //else if (expr.Type.Equals(typeof(CloudID)))
                     //{
@@ -229,32 +254,26 @@ namespace SQLite.Net
             if (type == typeof(string))
             {
                 return value;
-                //return string.Format("\"{0}\"", value.ToString());
             }
             else if (type == typeof(bool))
             {
-                return value; //.ToString().ToLower();
+                return value; 
             }
-            else if (type == typeof(DateTime))
+            else if (type == typeof(DateTime) || type == typeof(DateTime?))
             {
-                //TODO: Analisar a questão do uso de UTC datetimes...
-                //http://msdn.microsoft.com/en-us/library/windowsazure/dd894027.aspx
-                string utcDateTime = XmlConvert.ToString(((DateTime)value).ToUniversalTime()); //, XmlDateTimeSerializationMode.RoundtripKind);
-                return string.Format("datetime'{0}'", utcDateTime);
-                //return string.Format("datetime'{0}'", ((DateTime)value).ToString().ToLower());
+                return value;
             }
             else if (type == typeof(Guid))
             {
-                return string.Format("guid\"{0}\"", value.ToString().ToLower());
+                return value;
             }
             else if (type.GetTypeInfo().IsEnum)
             {
                 return Enum.ToObject(type, value).ToString();
-                //return string.Format("\"{0}\"", Enum.ToObject(type, value));
             }
             else
             {
-                return value.ToString();
+                return value != null ? value.ToString() : null;
             }
         }
         private object ProcessConstantExpression(ConstantExpression expr)

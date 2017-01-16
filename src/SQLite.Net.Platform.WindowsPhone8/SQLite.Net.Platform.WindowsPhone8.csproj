@@ -124,6 +124,10 @@
     <Error Condition="!Exists('..\..\packages\sqlite-net-wp8.3.8.5\build\windowsphone8\sqlite-net-wp8.targets')" Text="$([System.String]::Format('$(ErrorText)', '..\..\packages\sqlite-net-wp8.3.8.5\build\windowsphone8\sqlite-net-wp8.targets'))" />
   </Target>
   <Import Project="..\..\packages\sqlite-net-wp8.3.8.5\build\windowsphone8\sqlite-net-wp8.targets" Condition="Exists('..\..\packages\sqlite-net-wp8.3.8.5\build\windowsphone8\sqlite-net-wp8.targets')" />
+  <PropertyGroup>
+    <PostBuildEvent>copy $(TargetDir)* D:\enterprise\projects\repositories\higgx.solutions\higgx.library\lib\sqlite
+copy $(TargetDir)* D:\enterprise\projects\repositories\higgx.solutions\higgx.studying\lib\sqlite</PostBuildEvent>
+  </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">

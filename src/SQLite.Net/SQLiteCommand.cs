@@ -54,7 +54,10 @@ namespace SQLite.Net
         [PublicAPI]
         public int ExecuteNonQuery()
         {
-            _conn.TraceListener.WriteLine("Executing: {0}", this);
+            //_conn.TraceListener.WriteLine("Executing: {0}", this);
+            _conn.TraceListener.WriteLine("Executing: {0}-{1}({2})",
+                System.Threading.Tasks.Task.CurrentId, this.CommandText, _conn.IsInTransaction);
+
 
             var stmt = Prepare();
             var r = _sqlitePlatform.SQLiteApi.Step(stmt);
@@ -117,7 +120,7 @@ namespace SQLite.Net
         [PublicAPI]
         public IEnumerable<T> ExecuteDeferredQuery<T>(TableMapping map)
         {
-            _conn.TraceListener.WriteLine("Executing Query: {0}", this);
+            _conn.TraceListener.WriteLine("Executing Query: {0}", this.CommandText);
 
             var stmt = Prepare();
             try
@@ -159,7 +162,9 @@ namespace SQLite.Net
 
                             if (id == cols[i].MultiColumnCount)
                             {
-                                cols[i].SetValue(obj, args);
+                                //TODO: Add unit test...
+                                if (args.Any(a => a != null))
+                                    cols[i].SetValue(obj, args);
                                 args = null;
                             }
                         }
@@ -180,7 +185,7 @@ namespace SQLite.Net
         [CanBeNull]
         public T ExecuteScalar<T>()
         {
-            _conn.TraceListener.WriteLine("Executing Query: {0}", this);
+            _conn.TraceListener.WriteLine("Executing Query: {0}", this.CommandText);
 
             var val = default(T);
 

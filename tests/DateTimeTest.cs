@@ -53,7 +53,7 @@ namespace SQLite.Net.Tests
             Assert.AreEqual(fromDb.Time2.ToLocalTime(), org.Time2.ToLocalTime());
         }
 
-        private void TestDateTime(TestDb db)
+        private void TestDateTime(TestDb db, DateTime? time1 = null, DateTime? time2 = null)
         {
             db.CreateTable<TestObj>();
 
@@ -62,8 +62,8 @@ namespace SQLite.Net.Tests
             //
             var org = new TestObj
             {
-                Time1 = DateTime.UtcNow,
-                Time2 = DateTime.Now,
+                Time1 = time1 ?? DateTime.UtcNow,
+                Time2 = time2 ?? DateTime.Now,
             };
             db.Insert(org);
             var fromDb = db.Get<TestObj>(org.Id);
@@ -87,6 +87,25 @@ namespace SQLite.Net.Tests
             var db = new TestDb(true);
             TestDateTime(db);
         }
+
+        [Test]
+        public void MaxValueAsStrings()
+        {
+            var now = DateTime.MaxValue;
+
+            var db = new TestDb(storeDateTimeAsTicks: false);
+            TestDateTime(db, now, now.ToUniversalTime());
+        }
+
+        [Test]
+        public void MaxValueAsTicks()
+        {
+            var now = DateTime.MaxValue;
+
+            var db = new TestDb(true);
+            TestDateTime(db, now, now.ToUniversalTime());
+        }
+
 
         [Test]
         public async Task AsyncAsString()

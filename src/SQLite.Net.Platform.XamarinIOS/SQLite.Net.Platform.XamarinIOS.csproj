@@ -58,4 +58,8 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildExtensionsPath)\Xamarin\iOS\Xamarin.MonoTouch.CSharp.targets" />
+  <PropertyGroup>
+    <PostBuildEvent>copy $(TargetDir)* D:\enterprise\projects\repositories\higgx.solutions\higgx.library\lib\sqlite
+copy $(TargetDir)* D:\enterprise\projects\repositories\higgx.solutions\higgx.studying\lib\sqlite</PostBuildEvent>
+  </PropertyGroup>
 </Project>

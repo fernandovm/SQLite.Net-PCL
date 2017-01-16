@@ -57,6 +57,47 @@ namespace SQLite.Net.Tests
         }
 
         [Test]
+        public void SingleDateTimePropertyTest()
+        {
+            var now = DateTime.Now;
+            Expression<Func<Entity, bool>> expr = e => e.CreatedOn == now;
+            string filter = SQLiteExprParser.Parse(expr, expr.Parameters, args);
+
+            Assert.AreEqual("(CreatedOn = :CreatedOn)", filter);
+            Assert.AreEqual(now, args[":CreatedOn"]);
+        }
+
+        [Test]
+        public void NullableDateTimePropertyTest01()
+        {
+            DateTime? now = DateTime.Now;
+            Expression<Func<Entity, bool>> expr = e => e.Transfered <= now;
+            string filter = SQLiteExprParser.Parse(expr, expr.Parameters, args);
+
+            Assert.AreEqual("(Transfered <= :Transfered)", filter);
+            Assert.AreEqual(now, args[":Transfered"]);
+        }
+        [Test]
+        public void NullableDateTimePropertyTest02()
+        {
+            var now = DateTime.Now;
+            Expression<Func<Entity, bool>> expr = e => e.Transfered <= now;
+            string filter = SQLiteExprParser.Parse(expr, expr.Parameters, args);
+
+            Assert.AreEqual("(Transfered <= :Transfered)", filter);
+            Assert.AreEqual(now, args[":Transfered"]);
+        }
+        [Test]
+        public void NullableDateTimePropertyTest03()
+        {
+            Expression<Func<Entity, bool>> expr = e => e.Transfered == null; //Essa
+            string filter = SQLiteExprParser.Parse(expr, expr.Parameters, args);
+
+            Assert.AreEqual("(Transfered = :Transfered)", filter);
+            Assert.AreEqual(null, args[":Transfered"]);
+        }
+
+        [Test]
         public void SingleBooleanPropertyTest()
         {
             Expression<Func<IEntity, bool>> expr = e => e.Deleted == true;
@@ -156,11 +197,21 @@ namespace SQLite.Net.Tests
         }
 
         [Test]
-        public void SingleEnumPropertyTest()
+        public void SingleEqualEnumPropertyTest()
         {
             Expression<Func<IEntity, bool>> expr = e => e.Type == TypeTest.Const1;
             string filter = SQLiteExprParser.Parse(expr, expr.Parameters, args);
             Assert.AreEqual("(Type = :Type)", filter);
+
+            Assert.AreEqual("Const1", args[":Type"]);
+        }
+
+        [Test]
+        public void SingleNotEqualEnumPropertyTest()
+        {
+            Expression<Func<IEntity, bool>> expr = e => e.Type != TypeTest.Const1;
+            string filter = SQLiteExprParser.Parse(expr, expr.Parameters, args);
+            Assert.AreEqual("(Type <> :Type)", filter);
 
             Assert.AreEqual("Const1", args[":Type"]);
         }
@@ -303,6 +354,8 @@ namespace SQLite.Net.Tests
         public DateTime? DeletedAt { get; private set; }
 
         #endregion
+
+        public DateTime? Transfered { get; set; }
     }
 
     public static class Extensions
